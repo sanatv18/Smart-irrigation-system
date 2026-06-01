@@ -1,0 +1,187 @@
+MicroPython-Based Smart Irrigation System Using ESP32
+import machine
+import time
+import network
+import dht
+from machine import Pin, ADC
+import uasyncio as asyncio
+
+# -----------------------
+# Wi-Fi Configuration
+# -----------------------
+SSID = "Ankit"
+PASSWORD = "abcdefgh"
+
+# -----------------------
+# Pin Setup
+# -----------------------
+soil_pin = ADC(Pin(34))       # Soil moisture sensor on ADC pin
+soil_pin.atten(ADC.ATTN_11DB) # Full range (0-3.3V)
+
+flow_pin = Pin(26, Pin.IN)    # YFS201 flow sensor digital pin
+relay1 = Pin(25, Pin.OUT)     # Relay 1 → Solenoid Valve
+relay2 = Pin(33, Pin.OUT)     # Relay 2 → Water Pump
+dht_sensor = dht.DHT11(Pin(27))  # DHT11 temperature/humidity sensor
+
+# -----------------------
+# Flow Sensor Variables
+# -----------------------
+pulse_count = 0
+calibration_factor = 7.5  # YFS201 typical pulses per L/min
+
+def flow_handler(pin):
+    """Interrupt routine: counts pulses from flow sensor"""
+    global pulse_count
+    pulse_count += 1
+
+flow_pin.irq(trigger=Pin.IRQ_RISING, handler=flow_handler)
+
+# -----------------------
+# Wi-Fi Connection
+# -----------------------
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(SSID, PASSWORD)
+    while not wlan.isconnected():
+        print("Connecting to WiFi...")
+        time.sleep(1)
+    print("Connected to WiFi:", wlan.ifconfig())
+    return wlan
+
+# -----------------------
+# Sensor Reading Functions
+# -----------------------
+def read_soil():
+    value = soil_pin.read()
+    moisture = (4095 - value) * 100 / 4095
+    return round(moisture, 2)
+
+def read_flow():
+    global pulse_count
+    pulses = pulse_count
+    pulse_count = 0
+    flow_rate = pulses / calibration_factor
+    return round(flow_rate, 2)
+
+def read_dht11():
+    try:
+        dht_sensor.measure()
+        temp = dht_sensor.temperature()
+        hum = dht_sensor.humidity()
+        return temp, hum
+    except Exception as e:
+        print("DHT11 Error:", e)
+        return None, None
+
+# -----------------------
+# Web Server Handler
+# -----------------------
+async def serve_client(reader, writer):
+    request = await reader.read(1024)
+    request = str(request)
+
+    # Relay control from web
+    if "/relay1/on" in request:
+        relay1.value(1)
+    if "/relay1/off" in request:
+        relay1.value(0)
+    if "/relay2/on" in request:
+        relay2.value(1)
+    if "/relay2/off" in request:
+        relay2.value(0)
+
+    # Read sensors
+    soil = read_soil()
+    flow = read_flow()
+    temp, hum = read_dht11()
+
+    relay1_state = "ON" if relay1.value() == 1 else "OFF"
+    relay2_state = "ON" if relay2.value() == 1 else "OFF"
+
+    # HTML Page
+    response = f"""HTTP/1.0 200 OK
+
+<html>
+    <head>
+        <title>Smart Irrigation System</title>
+        <meta http-equiv="refresh" content="5">
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background: #f0f8ff;
+                color: #333;
+                text-align: center;
+                padding: 20px;
+            }}
+            h1 {{
+                color: #2e8b57;
+            }}
+            .card {{
+                background: #fff;
+                border-radius: 10px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                margin: 15px auto;
+                padding: 15px;
+                width: 300px;
+            }}
+            button {{
+                padding: 10px 20px;
+                margin: 5px;
+                border: none;
+                border-radius: 8px;
+                background: #2e8b57;
+                color: white;
+                font-size: 14px;
+                cursor: pointer;
+            }}
+            button:hover {{
+                background: #3cb371;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>🌱 Smart Irrigation Dashboard</h1>
+        
+        <div class="card">
+            <p><b>Soil Moisture:</b> {soil}%</p>
+            <p><b>Flow Rate:</b> {flow} L/min</p>
+            <p><b>Temperature:</b> {temp} °C</p>
+            <p><b>Humidity:</b> {hum} %</p>
+        </div>
+        
+        <div class="card">
+            <h2>Relay Controls</h2>
+            
+            <p>Solenoid Valve: {relay1_state}</p>
+            <p>
+                <a href="/relay1/on"><button>Valve ON</button></a>
+                <a href="/relay1/off"><button>Valve OFF</button></a>
+            </p>
+            
+            <p>Water Pump: {relay2_state}</p>
+            <p>
+                <a href="/relay2/on"><button>Pump ON</button></a>
+                <a href="/relay2/off"><button>Pump OFF</button></a>
+            </p>
+        </div>
+    </body>
+</html>
+"""
+    await writer.awrite(response)
+    await writer.aclose()
+
+# -----------------------
+# Main Program
+# -----------------------
+async def main():
+    wlan = connect_wifi()
+    server = await asyncio.start_server(serve_client, "0.0.0.0", 80)
+    print("Web server started, connect at:", wlan.ifconfig()[0])
+    while True:
+        await asyncio.sleep(1)
+
+try:
+    asyncio.run(main())
+except Exception as e:
+    print("Error:", e)
