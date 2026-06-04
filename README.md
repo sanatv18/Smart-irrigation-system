@@ -8,17 +8,10 @@ Unlike many cloud-dependent irrigation systems, this solution operates in ESP32 
 
 ## Patent Information
 
-This project is associated with a published patent application.
 
-**Title:** ESP32-Integrated Smart Irrigation System With Soil Moisture Regulation
+📜 Published Patent Application – Application No. 202541129612
 
-**Inventors:**
-- Dr. Kathirvelan J
-- Ankit Agrawal
-- Sanat Vasisht
-- Garv Khullar
-
-**Institution:** Vellore Institute of Technology (VIT), Vellore :contentReference[oaicite:1]{index=1}
+For complete patent information, see [PATENT.md](PATENT.md).
 
 ## Key Features
 
